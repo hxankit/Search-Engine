@@ -1,55 +1,83 @@
-from flask import Flask, render_template_string, request
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 import mysql.connector
 import math
+from typing import Optional
 
-app = Flask(__name__)
+app = FastAPI()
 
-UI_TEMPLATE = '''
+UI_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
     <title>Mini Search Engine</title>
     <style>
-        body { font-family: sans-serif; max-width: 750px; margin: 50px auto; line-height: 1.6; }
-        .search-box { width: 80%; padding: 10px; border-radius: 20px; border: 1px solid #ccc; font-size: 1em; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: sans-serif; max-width: 750px; margin: 50px auto; line-height: 1.6; padding: 0 20px; }
+        h1 { margin-bottom: 20px; }
+        .search-row { display: flex; gap: 10px; margin-bottom: 20px; }
+        .search-box { flex: 1; padding: 10px 16px; border-radius: 20px; border: 1px solid #ccc; font-size: 1em; }
+        .search-btn { padding: 10px 20px; border: none; border-radius: 20px; background: #4285f4; color: white; font-size: 1em; cursor: pointer; }
+        .search-btn:hover { background: #2a6dd9; }
+        hr { border: none; border-top: 1px solid #eee; margin-bottom: 20px; }
         .result { margin-bottom: 25px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
-        .url { color: green; font-size: 0.85em; }
-        .score { color: #888; font-size: 0.85em; }
+        .url { color: green; font-size: 0.85em; margin-bottom: 2px; }
+        .score { color: #888; font-size: 0.85em; margin-top: 4px; }
         a { font-size: 1.15em; color: #1a0dab; text-decoration: none; }
         a:hover { text-decoration: underline; }
         .no-results { color: #888; margin-top: 20px; }
+        .result-count { color: #555; font-size: 0.9em; margin-bottom: 16px; }
     </style>
 </head>
 <body>
     <h1>🔍 Mini Search Engine</h1>
-    <form method="POST">
-        <input type="text" name="query" class="search-box"
-               value="{{ query }}" placeholder="Search...">
-        <input type="submit" value="Search" style="padding:10px 16px; margin-left:8px;">
+    <form method="POST" action="/search">
+        <div class="search-row">
+            <input type="text" name="query" class="search-box"
+                   value="{{ query }}" placeholder="Search..." autofocus>
+            <button type="submit" class="search-btn">Search</button>
+        </div>
     </form>
     <hr>
     {% if query and not results %}
         <p class="no-results">No results found for <strong>{{ query }}</strong>.</p>
     {% endif %}
-    {% for url, title, score, match_count in results %}
-        <div class="result">
-            <div class="url">{{ url }}</div>
-            <a href="{{ url }}">{{ title }}</a>
-            <p class="score">
-                Relevance score: <strong>{{ "%.4f"|format(score) }}</strong>
-                &nbsp;|&nbsp; Terms matched: <strong>{{ match_count }}</strong>
-            </p>
-        </div>
-    {% endfor %}
+    {% if results %}
+        <p class="result-count">About {{ results|length }} result(s) for <strong>{{ query }}</strong></p>
+        {% for url, title, score, match_count in results %}
+            <div class="result">
+                <div class="url">{{ url }}</div>
+                <a href="{{ url }}" target="_blank">{{ title }}</a>
+                <p class="score">
+                    Relevance score: <strong>{{ "%.4f" % score }}</strong>
+                    &nbsp;|&nbsp; Terms matched: <strong>{{ match_count }}</strong>
+                </p>
+            </div>
+        {% endfor %}
+    {% endif %}
 </body>
 </html>
-'''
+"""
 
+# ── Jinja2 setup (inline templates) ─────────────────────────────────────────
+from jinja2 import Environment
+jinja_env = Environment()
+jinja_env.globals.update(len=len)
+
+def render(template_str: str, **context) -> HTMLResponse:
+    tmpl = jinja_env.from_string(template_str)
+    return HTMLResponse(tmpl.render(**context))
+
+
+# ── DB ───────────────────────────────────────────────────────────────────────
 def get_conn():
     return mysql.connector.connect(
         host="localhost", user="root", password="Anki@112", database="search_engine"
     )
 
+
+# ── TF-IDF Search ────────────────────────────────────────────────────────────
 def search(query: str):
     conn = get_conn()
     cursor = conn.cursor()
@@ -85,7 +113,6 @@ def search(query: str):
             JOIN word_index i ON p.id = i.page_id
             WHERE i.word = %s
         """, (term,))
-        #                 ✅ COALESCE prevents NULL word_count from crashing TF calc
 
         for page_id, url, title, word_count, term_count in cursor.fetchall():
             tf = term_count / max(word_count, 1)
@@ -108,16 +135,15 @@ def search(query: str):
     ]
 
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    results = []
-    query = ""
-    if request.method == 'POST':
-        query = request.form['query'].strip()
-        if query:
-            results = search(query)
-    return render_template_string(UI_TEMPLATE, results=results, query=query)
+# ── Routes ───────────────────────────────────────────────────────────────────
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return render(UI_TEMPLATE, query="", results=[])
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
+@app.post("/search", response_class=HTMLResponse)
+def do_search(query: str = Form(...)):
+    query = query.strip()
+    results = search(query) if query else []
+    return render(UI_TEMPLATE, query=query, results=results)
+
