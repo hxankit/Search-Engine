@@ -1,22 +1,6 @@
-import mysql.connector
-
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "Anki@112",
-    "database": "search_engine"
-}
-
-def get_conn():
-    """Just returns a connection — no table creation, no dropping."""
-    return mysql.connector.connect(**DB_CONFIG)
-
+from db.connection import get_conn
 
 def init_db():
-    """
-    Run ONCE to create tables fresh.
-    Wipes all existing data and recreates tables.
-    """
     conn = get_conn()
     cursor = conn.cursor()
 
@@ -45,8 +29,7 @@ def init_db():
 
     conn.commit()
     conn.close()
-    print("✅ Database setup complete! Tables created fresh.")
-
+    print("✅ Database ready.")
 
 if __name__ == "__main__":
     init_db()
