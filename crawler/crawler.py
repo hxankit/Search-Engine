@@ -1,5 +1,6 @@
 import requests
 import re
+import feedparser
 from bs4 import BeautifulSoup
 from db.connection import get_conn
 from crawler.seeds import SEED_URLS
@@ -15,6 +16,77 @@ STOP_WORDS = {
     "they","our","your","their"
 }
 
+# ── Auto-seed sources ────────────────────────────────────────────
+RSS_FEEDS = [
+    "https://news.ycombinator.com/rss",
+    "https://www.reddit.com/r/programming/.rss",
+    "https://techcrunch.com/feed/",
+    "https://feeds.arstechnica.com/arstechnica/index",
+]
+
+GOOGLE_TOPICS = [
+    "latest tech news",
+    "python programming",
+    "machine learning research",
+]
+# ────────────────────────────────────────────────────────────────
+
+
+def fetch_seeds_from_rss() -> list[str]:
+    urls = []
+    for feed_url in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries:
+                if hasattr(entry, "link"):
+                    urls.append(entry.link)
+            print(f"  ✓ RSS: {feed.feed.get('title', feed_url)} → {len(feed.entries)} URLs")
+        except Exception as e:
+            print(f"  ✗ RSS {feed_url} → {e}")
+    return urls
+
+
+def fetch_seeds_from_google(topic: str) -> list[str]:
+    urls = []
+    try:
+        search_url = f"https://www.google.com/search?q={topic.replace(' ', '+')}"
+        soup = BeautifulSoup(requests.get(search_url, headers=HEADERS, timeout=10).text, "html.parser")
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("/url?q=http"):
+                clean = href.split("/url?q=")[1].split("&")[0]
+                urls.append(clean)
+        print(f"  ✓ Google: '{topic}' → {len(urls)} URLs")
+    except Exception as e:
+        print(f"  ✗ Google '{topic}' → {e}")
+    return urls
+
+
+def auto_seed() -> list[str]:
+    """Gather fresh seed URLs from RSS feeds and Google, skip already-crawled ones."""
+    print("\n🌱 Auto-seeding...\n")
+
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT url FROM pages")
+    already_crawled = {row[0] for row in cursor.fetchall()}
+    conn.close()
+
+    all_urls = []
+
+    # Collect from RSS
+    all_urls += fetch_seeds_from_rss()
+
+    # Collect from Google topics
+    for topic in GOOGLE_TOPICS:
+        all_urls += fetch_seeds_from_google(topic)
+
+    # Deduplicate and remove already-crawled
+    fresh = list({u for u in all_urls if u not in already_crawled})
+    print(f"\n  → {len(fresh)} fresh seed URLs ready.\n")
+    return fresh
+
+
 def crawl(seed_url: str, max_pages: int = 5):
     conn = get_conn()
     cursor = conn.cursor()
@@ -22,8 +94,8 @@ def crawl(seed_url: str, max_pages: int = 5):
     cursor.execute("SELECT url FROM pages")
     already_crawled = {row[0] for row in cursor.fetchall()}
 
-    queue   = [seed_url]
-    visited = set(already_crawled)
+    queue     = [seed_url]
+    visited   = set(already_crawled)
     new_count = 0
 
     while queue and new_count < max_pages:
@@ -91,8 +163,16 @@ if __name__ == "__main__":
     print("🗄  Setting up DB...")
     init_db()
 
-    print("\n🕷  Crawling...\n")
+    # ── Static seeds (first run / fallback) ─────────────────────
+    print("\n🕷  Crawling static seeds...\n")
     for url in SEED_URLS:
+        print(f"{'='*55}\n🌐 {url}\n{'='*55}")
+        crawl(url, max_pages=5)
+
+    # ── Auto-discovered seeds ────────────────────────────────────
+    fresh_seeds = auto_seed()
+    print("\n🕷  Crawling auto-discovered seeds...\n")
+    for url in fresh_seeds:
         print(f"{'='*55}\n🌐 {url}\n{'='*55}")
         crawl(url, max_pages=5)
 
