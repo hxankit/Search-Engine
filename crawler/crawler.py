@@ -8,7 +8,13 @@ from crawler.seeds import SEED_URLS
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
+from langdetect import detect
 
+def is_english(text):
+    try:
+        return detect(text) == "en"
+    except:
+        return False
 STOP_WORDS = {
     "the","is","at","on","and","a","an","to","in","of","it","for",
     "with","this","that","was","are","as","be","by","or","but","not",
@@ -113,7 +119,12 @@ def crawl(seed_url: str, max_pages: int = 5):
 
             soup   = BeautifulSoup(response.text, "html.parser")
             title  = soup.title.string.strip() if soup.title else url
-            text   = soup.get_text(separator=" ").lower()
+            text   = soup.get_text(separator=" ")
+            if not is_english(text[:2000]):   # check only first part (fast)
+                print("    ✗ Skipped (non-English)")
+                visited.add(url)
+                continue
+            text = text.lower()
             clean  = re.sub(r"[^a-z\s]", "", text)
             tokens = clean.split()
 
